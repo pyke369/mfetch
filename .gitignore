@@ -1,0 +1,5 @@
+mfetch
+debian/*debhelper*
+debian/*substvars*
+debian/files
+_*

@@ -123,5 +123,8 @@ func hfatal(message string, exit int) {
 	if exit != 0 {
 		fmt.Fprintf(os.Stderr, "\r                                                  \r%s - aborting\n", message)
 	}
+	if progress {
+		fmt.Printf(`{"event":"error","message":"%s"}`+"\n", message)
+	}
 	os.Exit(exit)
 }

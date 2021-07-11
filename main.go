@@ -27,7 +27,8 @@ type RESUME struct {
 
 var (
 	progname = "mfetch"
-	version  = "1.0.1"
+	version  = "1.0.2"
+	progress = false
 )
 
 // server mode requests handler
@@ -73,6 +74,7 @@ options:
 	fset.Var(&headers, "header", "add arbitrary HTTP header to requests (repeatable)")
 	fset.BoolVar(&trustpeer, "trustpeer", trustpeer, "ignore server TLS certificate errors (default false)")
 	fset.BoolVar(&verbose, "verbose", verbose, "verbose mode (default false)")
+	fset.BoolVar(&progress, "progress", progress, "emit transfer progress JSON indications (default false)")
 	fset.BoolVar(&noresume, "noresume", noresume, "ignore transfer auto-resuming (default false)")
 	fset.StringVar(&listen, "listen", listen, "listening address & port in server mode (default client mode)")
 	fset.StringVar(&tlspair, "tls", tlspair, `TLS certificate & key to use in server mode (or "internal", default none)`)
@@ -291,10 +293,7 @@ options:
 	}
 
 	// monitor transfer activity
-	ticker, volumes, start, ssize := time.NewTicker(time.Second), [][2]int64{}, time.Now(), int64(-1)
-	if verbose {
-		fmt.Fprintf(os.Stderr, "%s/%s | %.1f%% | %s | %s | %s      ", hsize(0), hsize(size), 0.0, hbandwidth(0), hduration(-1), hduration(-1))
-	}
+	ticker, volumes, start, ssize, ptype := time.NewTicker(time.Second), [][2]int64{}, time.Now(), int64(-1), "start"
 	for {
 		select {
 		case <-ticker.C:
@@ -328,14 +327,24 @@ options:
 				if bandwidth > 0 {
 					remaining = int64(math.Max(float64(elapsed), float64(ssize/int64(bandwidth/8))+1))
 				}
-				fmt.Fprintf(os.Stderr, "\r%s/%s | %.1f%% | %s | %s/%s      ",
-					hsize(received), hsize(size), (float64(received)*100)/float64(size),
+				fmt.Fprintf(os.Stderr, "\r%d | %s/%s | %.1f%% | %s | %s/%s      ",
+					concurrency, hsize(received), hsize(size), (float64(received)*100)/float64(size),
 					hbandwidth(bandwidth), hduration(elapsed), hduration(remaining))
+			}
+			if progress {
+				fmt.Printf(`{"event":"%s","concurrency":%d,"size":%d,"received":%d,"progress":%.0f,"elapsed":%d}`+"\n",
+					ptype, concurrency, size, received, math.Floor((float64(received)*100)/float64(size)),
+					int64(time.Now().Sub(start)/time.Second))
+				ptype = "progress"
 			}
 			if received == size || exit {
 				ticker.Stop()
 				if verbose {
 					fmt.Fprintf(os.Stderr, "\n")
+				}
+				if progress {
+					fmt.Printf(`{"event":"end","concurrency":%d,"size":%d,"received":%d,"progress":100,"elapsed":%d}`+"\n",
+						concurrency, size, received, int64(time.Now().Sub(start)/time.Second))
 				}
 				if received == size && resume != "" {
 					os.Remove(resume)

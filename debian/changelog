@@ -1,3 +1,9 @@
+mfetch (1.0.2) stable; urgency=medium
+
+  * add JSON progress indications on stdout with the --progress option
+
+ -- Pierre-Yves Kerembellec <py.kerembellec@gmail.com>  Tue, 06 Jul 2021 17:45:38 +0200
+
 mfetch (1.0.1) stable; urgency=medium
 
   * initial public release

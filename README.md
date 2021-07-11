@@ -28,6 +28,8 @@ options:
     	ignore transfer auto-resuming (default false)
   -password string
     	security password in server mode (default none)
+  -progress
+        emit transfer progress JSON indications (default false)
   -tls string
     	TLS certificate & key to use in server mode (or "internal", default none)
   -trustpeer
@@ -58,7 +60,9 @@ like the `internal` one provided by `mfetch`, see `--tls` below).
 - `--noresume` (default false): always ignore resuming state-file and restart transfer from the beginning. <ins>Note</ins>: if
 the server does not support byte-range requests, `concurrency` is automatically set to 1 and transfer resuming is disabled.
 
-- `--verbose` (default false): display transfer progress information (see format in the `Examples` section below).
+- `--verbose` (default false): display transfer progress information on standard error (see format in the `Examples` section below).
+
+- `--progress` (default false): emit transfer progress indications on standard output (in JSON format, see format in the `Examples` section below).
 
 
 ## Server mode
@@ -96,16 +100,23 @@ $ mfetch --listen :443 --tls internal --password password /tmp
 Start an mfetch instance in client mode a,d download the `20GB` file from the server instance above (since the
 self-signed internal TLS certificate was used, the `--trustpeer` must be added to the command-line options) :
 ```
-$ mfetch --verbose --trustpeer https://anylogin:password@myserver.com/20GB out
-860.45MB/20.0GB | 4.2% | 293.8Mb/s | 0:00:24/0:09:44
+$ mfetch --verbose --progress --trustpeer https://login:password@myserver.com/20GB out
+6 | 860.45MB/20.0GB | 4.2% | 293.8Mb/s | 0:00:24/0:09:44
+{"event":"start","concurrency":6,"size":21474836480,"received":0,"progress":0,"elapsed":0}
+...
+{"event":"progress","concurrency":6,"size":21474836480,"received":902247219,"progress":4,"elapsed":24}
 ```
-When the `--verbose` option is specified on the command-line, `mfetch` will output some progress information in
-the following format:
+When the `--verbose` option is specified on the command-line, `mfetch` will output some progress information
+on the standard error in the following format:
+```
+<concurrency> | <transferred size>/<total size> | <transferred percentage> | <transfer speed> | <elapsed time>/<total time>
+```
 
+When the `--progress` option is specified on the command-line, `mfetch` will emit some progress indications
+on the standard output in the following JSON format:
 ```
-<transferred size>/<total size> | <transferred percentage> | <transfer speed> | <elapsed time>/<total time>
+{"event":"<start|progress|end>","concurrency":<concurrency>,"size":<total size>,"received":<transferred size>,"progress":<transferred percentage>,"elapsed":<elapsed seconds>}
 ```
-
 
 ## Build and packaging
 You need to install a recent version of the [Golang](https://golang.org/dl/) compiler (>= 1.15) and the GNU [make](https://www.gnu.org/software/make)

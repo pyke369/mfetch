@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -54,7 +55,7 @@ func shandler(password string, handler http.Handler) http.Handler {
 func main() {
 
 	// parse command-line arguments
-	concurrency, headers, trustpeer, verbose, noresume, listen, tlspair, password := 10, multiflag{}, false, false, false, "", "", ""
+	concurrency, headers, trustpeer, verbose, noresume, listen, tlspair, password, timeout, idletimeout, retry := 10, multiflag{}, false, false, false, "", "", "", 30, 30, 1
 	fset := flag.NewFlagSet("lambda-gateway", flag.ExitOnError)
 	fset.Usage = func() {
 		fmt.Fprintf(os.Stderr, `usage:
@@ -79,6 +80,9 @@ options:
 	fset.StringVar(&listen, "listen", listen, "listening address & port in server mode (default client mode)")
 	fset.StringVar(&tlspair, "tls", tlspair, `TLS certificate & key to use in server mode (or "internal", default none)`)
 	fset.StringVar(&password, "password", password, "security password in server mode (default none)")
+	fset.IntVar(&timeout, "timeout", timeout, "Connection timeout")
+	fset.IntVar(&idletimeout, "idletimeout", idletimeout, "Connection idle timeout")
+	fset.IntVar(&retry, "retry", retry, "Maximum retry attempts per chunk")
 	fset.Parse(os.Args[1:])
 	listen, tlspair, password = strings.TrimLeft(strings.TrimSpace(listen), "*"), strings.TrimSpace(tlspair), strings.TrimSpace(password)
 	if (listen != "" && fset.NArg() != 1) || (listen == "" && fset.NArg() != 2) {
@@ -161,7 +165,7 @@ options:
 			request.Header.Set(header[0], header[1])
 		}
 		request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", progname, version))
-		client := &http.Client{Timeout: 5 * time.Second, Transport: transport}
+		client := &http.Client{Timeout: time.Duration(timeout) * time.Second, Transport: transport}
 		if response, err := client.Do(request); err == nil {
 			response.Body.Close()
 			if response.StatusCode != http.StatusOK {
@@ -175,6 +179,12 @@ options:
 			}
 			if last, err := http.ParseTime(response.Header.Get("Last-Modified")); err == nil {
 				modified = last.Unix()
+			}
+			if tmp := response.Request.URL.String(); tmp != remote {
+				remote = tmp
+				if verbose {
+					fmt.Fprintf(os.Stderr, "Followed redirect to %s\n", remote)
+				}
 			}
 		} else {
 			hfatal(fmt.Sprintf("%v", err), 2)
@@ -242,52 +252,80 @@ options:
 
 	// start transfer workers
 	sink := make(chan error, concurrency)
+	if retry < 1 || retry > 20 {
+		retry = 1
+	}
 	for index := 0; index < concurrency; index++ {
 		go func(index int) {
 			start, end := chunks[index][0]+chunks[index][2], chunks[index][1]
 			if start > end {
 				return
 			}
-			if request, err := http.NewRequest(http.MethodGet, remote, nil); err == nil {
-				for _, header := range headers {
-					request.Header.Set(header[0], header[1])
-				}
-				request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", progname, version))
-				request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
-				client := &http.Client{Transport: transport}
-				if response, err := client.Do(request); err == nil {
-					if response.StatusCode/100 != 2 {
-						sink <- fmt.Errorf("invalid HTTP status code %d", response.StatusCode)
-						return
-					}
-					if response.ContentLength != end-start+1 {
-						sink <- fmt.Errorf("invalid content length (received %d instead of expected %d)", response.ContentLength, end-start+1)
-						return
-					}
-					block := make([]byte, 64<<10)
-					for start < end && !exit {
-						read, err := response.Body.Read(block)
-						if read > 0 {
-							if handle != nil {
-								if _, err := handle.WriteAt(block[:read], start); err != nil {
-									sink <- err
-									return
+			for tries := retry; tries > 0; tries-- {
+				doit := func() error {
+					atomic.StoreInt64(&(chunks[index][2]), 0)
+					if request, err := http.NewRequest(http.MethodGet, remote, nil); err == nil {
+						for _, header := range headers {
+							request.Header.Set(header[0], header[1])
+						}
+						request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", progname, version))
+						request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+						client := &http.Client{
+							Transport: &http.Transport{
+								Dial: (&net.Dialer{
+									Timeout:   time.Duration(timeout) * time.Second,
+									KeepAlive: 0,
+								}).Dial,
+								TLSHandshakeTimeout:   time.Duration(timeout) * time.Second,
+								ResponseHeaderTimeout: time.Duration(timeout) * time.Second,
+							},
+						}
+						readTimeoutChan := make(chan struct{})
+						readtimeoutTimer := time.AfterFunc(5*time.Second, func() {
+							close(readTimeoutChan)
+						})
+						request.Cancel = readTimeoutChan
+						if response, err := client.Do(request); err == nil {
+							if response.StatusCode/100 != 2 {
+								return fmt.Errorf("invalid HTTP status code %d", response.StatusCode)
+							}
+							if response.ContentLength != end-start+1 {
+								return fmt.Errorf("invalid content length (received %d instead of expected %d)", response.ContentLength, end-start+1)
+							}
+							block := make([]byte, 64<<10)
+							for start < end && !exit {
+								readtimeoutTimer.Reset(time.Duration(idletimeout) * time.Second)
+								read, err := response.Body.Read(block)
+								if read > 0 {
+									if handle != nil {
+										if _, err := handle.WriteAt(block[:read], start); err != nil {
+											return err
+										}
+									}
+									atomic.AddInt64(&(chunks[index][2]), int64(read))
+									start += int64(read)
+								}
+								if err != nil && read <= 0 {
+									response.Body.Close()
+									return err
 								}
 							}
-							atomic.AddInt64(&(chunks[index][2]), int64(read))
-							start += int64(read)
+							response.Body.Close()
+							return nil
+						} else {
+							return err
 						}
-						if err != nil && read <= 0 {
-							sink <- err
-							break
-						}
+					} else {
+						return err
 					}
-					response.Body.Close()
-				} else {
-					sink <- err
 				}
-			} else {
-				sink <- err
+				if err := doit(); err != nil && tries == 1 {
+					sink <- err
+					return
+				}
+				if verbose {
+					fmt.Fprintf(os.Stderr, "\rError downloading chunk %d, retrying. %d attempts left...\n", index, tries-1)
+				}
 			}
 		}(index)
 	}

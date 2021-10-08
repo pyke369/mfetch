@@ -261,70 +261,71 @@ options:
 			if start > end {
 				return
 			}
-			for tries := retry; tries > 0; tries-- {
-				doit := func() error {
-					atomic.StoreInt64(&(chunks[index][2]), 0)
-					if request, err := http.NewRequest(http.MethodGet, remote, nil); err == nil {
-						for _, header := range headers {
-							request.Header.Set(header[0], header[1])
+			doit := func() error {
+				atomic.StoreInt64(&(chunks[index][2]), 0)
+				if request, err := http.NewRequest(http.MethodGet, remote, nil); err == nil {
+					for _, header := range headers {
+						request.Header.Set(header[0], header[1])
+					}
+					request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", progname, version))
+					request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+					client := &http.Client{
+						Transport: &http.Transport{
+							Dial: (&net.Dialer{
+								Timeout:   time.Duration(timeout) * time.Second,
+								KeepAlive: 0,
+							}).Dial,
+							TLSHandshakeTimeout:   time.Duration(timeout) * time.Second,
+							ResponseHeaderTimeout: time.Duration(timeout) * time.Second,
+						},
+					}
+					readTimeoutChan := make(chan struct{})
+					readtimeoutTimer := time.AfterFunc(time.Duration(timeout)*time.Second, func() {
+						close(readTimeoutChan)
+					})
+					request.Cancel = readTimeoutChan
+					if response, err := client.Do(request); err == nil {
+						if response.StatusCode/100 != 2 {
+							return fmt.Errorf("invalid HTTP status code %d", response.StatusCode)
 						}
-						request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", progname, version))
-						request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
-						client := &http.Client{
-							Transport: &http.Transport{
-								Dial: (&net.Dialer{
-									Timeout:   time.Duration(timeout) * time.Second,
-									KeepAlive: 0,
-								}).Dial,
-								TLSHandshakeTimeout:   time.Duration(timeout) * time.Second,
-								ResponseHeaderTimeout: time.Duration(timeout) * time.Second,
-							},
+						if response.ContentLength != end-start+1 {
+							return fmt.Errorf("invalid content length (received %d instead of expected %d)", response.ContentLength, end-start+1)
 						}
-						readTimeoutChan := make(chan struct{})
-						readtimeoutTimer := time.AfterFunc(5*time.Second, func() {
-							close(readTimeoutChan)
-						})
-						request.Cancel = readTimeoutChan
-						if response, err := client.Do(request); err == nil {
-							if response.StatusCode/100 != 2 {
-								return fmt.Errorf("invalid HTTP status code %d", response.StatusCode)
-							}
-							if response.ContentLength != end-start+1 {
-								return fmt.Errorf("invalid content length (received %d instead of expected %d)", response.ContentLength, end-start+1)
-							}
-							block := make([]byte, 64<<10)
-							for start < end && !exit {
-								readtimeoutTimer.Reset(time.Duration(idletimeout) * time.Second)
-								read, err := response.Body.Read(block)
-								if read > 0 {
-									if handle != nil {
-										if _, err := handle.WriteAt(block[:read], start); err != nil {
-											return err
-										}
+						block := make([]byte, 64<<10)
+						for start < end && !exit {
+							readtimeoutTimer.Reset(time.Duration(idletimeout) * time.Second)
+							read, err := response.Body.Read(block)
+							if read > 0 {
+								if handle != nil {
+									if _, err := handle.WriteAt(block[:read], start); err != nil {
+										return err
 									}
-									atomic.AddInt64(&(chunks[index][2]), int64(read))
-									start += int64(read)
 								}
-								if err != nil && read <= 0 {
-									response.Body.Close()
-									return err
-								}
+								atomic.AddInt64(&(chunks[index][2]), int64(read))
+								start += int64(read)
 							}
-							response.Body.Close()
-							return nil
-						} else {
-							return err
+							if err != nil && read <= 0 {
+								response.Body.Close()
+								return err
+							}
 						}
+						response.Body.Close()
+						return nil
 					} else {
 						return err
 					}
+				} else {
+					return err
 				}
-				if err := doit(); err != nil && tries == 1 {
+			}
+			for tries := retry; tries > 0; tries-- {
+				err := doit()
+				if err != nil && tries == 1 {
 					sink <- err
 					return
 				}
 				if verbose {
-					fmt.Fprintf(os.Stderr, "\rError downloading chunk %d, retrying. %d attempts left...\n", index, tries-1)
+					fmt.Fprintf(os.Stderr, "\rError downloading chunk %d, retrying. %d attempts left: %s\n", index, tries-1, err)
 				}
 			}
 		}(index)

@@ -320,7 +320,10 @@ options:
 			}
 			for tries := retry; tries > 0; tries-- {
 				err := doit()
-				if err != nil && tries == 1 {
+				if err == nil {
+					return
+				}
+				if tries == 1 {
 					sink <- err
 					return
 				}

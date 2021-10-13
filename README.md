@@ -22,6 +22,8 @@ options:
     	transfer concurrency level (default 10)
   -header value
     	add arbitrary HTTP header to requests (repeatable)
+  -idletimeout int
+    	Connection idle timeout in seconds (default 30)
   -listen string
     	listening address & port in server mode (default client mode)
   -noresume
@@ -29,7 +31,11 @@ options:
   -password string
     	security password in server mode (default none)
   -progress
-        emit transfer progress JSON indications (default false)
+    	emit transfer progress JSON indications (default false)
+  -retry int
+    	Maximum retry attempts per chunk (default disabled)
+  -timeout int
+    	Connection timeout in seconds (default 30)
   -tls string
     	TLS certificate & key to use in server mode (or "internal", default none)
   -trustpeer
@@ -64,6 +70,11 @@ the server does not support byte-range requests, `concurrency` is automatically 
 
 - `--progress` (default false): emit transfer progress indications on standard output (in JSON format, see format in the `Examples` section below).
 
+- `--timeout` (default 30s): Maximum duration allowed for the server to start to respond.
+
+- `--idletimeout` (default 30s): After a connection is established, if no data is received for this duration, the request is aborted.
+
+- `--retry` (default disabled): Maximum retry attemps allowed to download each chunk. For the total maximum number of requests allowed, multiply by `concurrency`
 
 ## Server mode
 The folder to share must be provided as the only argument in server mode; only files in the specified folder will be

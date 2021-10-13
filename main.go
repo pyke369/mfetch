@@ -55,7 +55,7 @@ func shandler(password string, handler http.Handler) http.Handler {
 func main() {
 
 	// parse command-line arguments
-	concurrency, headers, trustpeer, verbose, noresume, listen, tlspair, password, timeout, idletimeout, retry := 10, multiflag{}, false, false, false, "", "", "", 30, 30, 1
+	concurrency, headers, trustpeer, verbose, noresume, listen, tlspair, password, timeout, idletimeout, retry := 10, multiflag{}, false, false, false, "", "", "", 30, 30, 0
 	fset := flag.NewFlagSet("lambda-gateway", flag.ExitOnError)
 	fset.Usage = func() {
 		fmt.Fprintf(os.Stderr, `usage:
@@ -80,9 +80,9 @@ options:
 	fset.StringVar(&listen, "listen", listen, "listening address & port in server mode (default client mode)")
 	fset.StringVar(&tlspair, "tls", tlspair, `TLS certificate & key to use in server mode (or "internal", default none)`)
 	fset.StringVar(&password, "password", password, "security password in server mode (default none)")
-	fset.IntVar(&timeout, "timeout", timeout, "Connection timeout")
-	fset.IntVar(&idletimeout, "idletimeout", idletimeout, "Connection idle timeout")
-	fset.IntVar(&retry, "retry", retry, "Maximum retry attempts per chunk")
+	fset.IntVar(&timeout, "timeout", timeout, "Connection timeout in seconds")
+	fset.IntVar(&idletimeout, "idletimeout", idletimeout, "Connection idle timeout in seconds")
+	fset.IntVar(&retry, "retry", retry, "Maximum retry attempts per chunk (default disabled)")
 	fset.Parse(os.Args[1:])
 	listen, tlspair, password = strings.TrimLeft(strings.TrimSpace(listen), "*"), strings.TrimSpace(tlspair), strings.TrimSpace(password)
 	if (listen != "" && fset.NArg() != 1) || (listen == "" && fset.NArg() != 2) {
@@ -252,8 +252,8 @@ options:
 
 	// start transfer workers
 	sink := make(chan error, concurrency)
-	if retry < 1 || retry > 20 {
-		retry = 1
+	if retry < 0 || retry > 20 {
+		retry = 0
 	}
 	for index := 0; index < concurrency; index++ {
 		go func(index int) {
@@ -318,12 +318,12 @@ options:
 					return err
 				}
 			}
-			for tries := retry; tries > 0; tries-- {
+			for tries := retry; tries >= 0; tries-- {
 				err := doit()
 				if err == nil {
 					return
 				}
-				if tries == 1 {
+				if tries == 0 {
 					sink <- err
 					return
 				}

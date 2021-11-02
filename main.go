@@ -262,7 +262,6 @@ options:
 				return
 			}
 			doit := func() error {
-				atomic.StoreInt64(&(chunks[index][2]), 0)
 				if request, err := http.NewRequest(http.MethodGet, remote, nil); err == nil {
 					for _, header := range headers {
 						request.Header.Set(header[0], header[1])
@@ -293,9 +292,9 @@ options:
 						}
 						block := make([]byte, 64<<10)
 						for start < end && !exit {
-							readtimeoutTimer.Reset(time.Duration(idletimeout) * time.Second)
 							read, err := response.Body.Read(block)
 							if read > 0 {
+								readtimeoutTimer.Reset(time.Duration(idletimeout) * time.Second)
 								if handle != nil {
 									if _, err := handle.WriteAt(block[:read], start); err != nil {
 										return err

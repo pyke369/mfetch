@@ -291,7 +291,7 @@ options:
 							return fmt.Errorf("invalid content length (received %d instead of expected %d)", response.ContentLength, end-start+1)
 						}
 						block := make([]byte, 64<<10)
-						for start < end && !exit {
+						for start <= end && !exit {
 							read, err := response.Body.Read(block)
 							if read > 0 {
 								readtimeoutTimer.Reset(time.Duration(idletimeout) * time.Second)

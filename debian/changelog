@@ -1,3 +1,9 @@
+mfetch (1.1.0) stable; urgency=medium
+
+  * revamp the transfer algorithm and add remote target support
+
+ -- Pierre-Yves Kerembellec <py.kerembellec@gmail.com>  Thu, 09 Dec 2021 10:37:15 +0100
+
 mfetch (1.0.2) stable; urgency=medium
 
   * add JSON progress indications on stdout with the --progress option

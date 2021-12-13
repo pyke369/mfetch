@@ -2,7 +2,7 @@
 
 # build targets
 mfetch: *.go
-	@env GOPATH=/tmp/go CGO_ENABLED=0 go build -trimpath -o mfetch
+	@env GOPATH=/tmp/go go get -d && env GOPATH=/tmp/go CGO_ENABLED=0 go build -trimpath -o mfetch
 	@-strip mfetch 2>/dev/null || true
 	@-upx -9 mfetch 2>/dev/null || true
 clean:
@@ -16,6 +16,7 @@ debclean:
 
 # run targets
 client: mfetch
-	@./mfetch --verbose --trustpeer https://login:password@myserver.com/20GB 20GB
+	@./mfetch --verbose http://localhost:8000/100GiB
+
 server: mfetch
-	@./mfetch --listen :443 --tls internal --password password .
+	@./mfetch --listen :8000

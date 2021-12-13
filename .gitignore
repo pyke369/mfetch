@@ -1,5 +1,6 @@
 mfetch
-debian/*debhelper*
-debian/*substvars*
 debian/files
+debian/*substvars*
+debian/*debhelper*
+*.upx
 _*

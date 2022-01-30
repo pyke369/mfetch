@@ -196,8 +196,7 @@ func Client() {
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: Insecure},
 		TLSHandshakeTimeout:   time.Duration(Timeout) * time.Second,
 		ResponseHeaderTimeout: time.Duration(Timeout) * time.Second,
-		WriteBufferSize:       128 << 10,
-		ReadBufferSize:        128 << 10,
+		ReadBufferSize:        1 << 20,
 		MaxIdleConnsPerHost:   32,
 	}
 	client = &http.Client{Transport: transport}

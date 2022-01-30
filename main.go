@@ -13,7 +13,7 @@ import (
 
 var (
 	PROGNAME = "mfetch"
-	VERSION  = "1.1.0"
+	VERSION  = "1.1.1"
 
 	Flagset     = flag.NewFlagSet(PROGNAME, flag.ExitOnError)
 	Concurrency = 8

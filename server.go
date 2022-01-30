@@ -77,7 +77,7 @@ MJYHjCl6QyJlC4jv/NkchyPwYY11YubYXvxAjNnTB11uFLz2XpQF3+t5z60MBye/
 GooiNcKqSQG5n1ivW1PdzY3T0Q==
 -----END PRIVATE KEY-----
 `}
-	content = bytes.Repeat([]byte{0}, 128<<10)
+	content = bytes.Repeat([]byte{0}, 1<<20)
 )
 
 func simulate() http.Handler {
@@ -206,7 +206,7 @@ func Server() {
 		ReadTimeout: time.Duration(Timeout) * time.Second,
 	}
 	for {
-		if listener, err := listener.NewTCPListener("tcp", Listen, true, 0, 128<<10, nil); err == nil {
+		if listener, err := listener.NewTCPListener("tcp", Listen, true, 0, 0, nil); err == nil {
 			if len(tlspaths) == 2 {
 				certificates := &dynacert.DYNACERT{}
 				certificates.Add("*", tlspaths[0], tlspaths[1])

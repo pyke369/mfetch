@@ -1,22 +1,19 @@
 #!/bin/sh
 
+PROGNAME=mfetch
+
 # build targets
-mfetch: *.go
-	@env GOPATH=/tmp/go go get -d && env GOPATH=/tmp/go CGO_ENABLED=0 go build -trimpath -o mfetch
-	@-strip mfetch 2>/dev/null || true
-	@-upx -9 mfetch 2>/dev/null || true
+$(PROGNAME): *.go
+	@env GOPATH=/tmp/go go get -d && env GOPATH=/tmp/go CGO_ENABLED=0 GOARCH=${_ARCH} GOOS=${_OS} go build -trimpath -o $(PROGNAME)
+	@-strip $(PROGNAME) 2>/dev/null || true
+	@-#upx -9 $(PROGNAME) 2>/dev/null || true
 clean:
 distclean:
-	@rm -f mfetch *.upx
-deb:
-	@debuild -e GOROOT -e GOPATH -e PATH -i -us -uc -b
-debclean:
-	@debuild -- clean
-	@rm -f ../mfetch_*
+	@rm -f $(PROGNAME) *.upx
 
 # run targets
-client: mfetch
-	@./mfetch --verbose http://localhost:8000/100GiB
+server: $(PROGNAME)
+	@./$(PROGNAME) --verbose --dump --listen :8000
+client: $(PROGNAME)
+	@./$(PROGNAME) --verbose http://localhost:8000/100GiB
 
-server: mfetch
-	@./mfetch --listen :8000

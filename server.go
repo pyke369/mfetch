@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -77,8 +78,31 @@ MJYHjCl6QyJlC4jv/NkchyPwYY11YubYXvxAjNnTB11uFLz2XpQF3+t5z60MBye/
 GooiNcKqSQG5n1ivW1PdzY3T0Q==
 -----END PRIVATE KEY-----
 `}
-	content = bytes.Repeat([]byte{0}, 1<<20)
+	content  = bytes.Repeat([]byte{0}, 64<<10)
+	rid      = int64(0)
+	inflight = int64(0)
+	total    = int64(0)
+	messages = make(chan string, 1024)
 )
+
+type accountingWriter struct {
+	rw     http.ResponseWriter
+	status int
+	total  int64
+}
+
+func (aw *accountingWriter) Header() http.Header {
+	return aw.rw.Header()
+}
+func (aw *accountingWriter) WriteHeader(status int) {
+	aw.status = status
+	aw.rw.WriteHeader(status)
+}
+func (aw *accountingWriter) Write(data []byte) (n int, err error) {
+	aw.total += int64(len(data))
+	atomic.AddInt64(&total, int64(len(data)))
+	return aw.rw.Write(data)
+}
 
 func simulate() http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -147,7 +171,7 @@ func simulate() http.Handler {
 
 func base(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Server", fmt.Sprintf("%s/%s", PROGNAME, VERSION))
+		response.Header().Set("Server", fmt.Sprintf("%s/%s", PROGNAME, PROGVER))
 		response.Header().Set("Access-Control-Allow-Origin", "*")
 		response.Header().Set("Access-Control-Allow-Methods", "OPTIONS, HEAD, GET")
 		response.Header().Set("Access-Control-Max-Age", "86400")
@@ -160,7 +184,7 @@ func base(handler http.Handler) http.Handler {
 		}
 		if Password != "" {
 			_, received, _ := request.BasicAuth()
-			if !acl.Password(received, []string{Password}) {
+			if match, _ := acl.Password(received, []string{Password}, false); !match {
 				response.Header().Set("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, PROGNAME))
 				response.WriteHeader(http.StatusUnauthorized)
 				return
@@ -170,27 +194,70 @@ func base(handler http.Handler) http.Handler {
 			response.WriteHeader(http.StatusNotFound)
 			return
 		}
-		handler.ServeHTTP(response, request)
+
+		atomic.AddInt64(&inflight, 1)
+		id, start, writer, srange := atomic.AddInt64(&rid, 1), time.Now(), accountingWriter{rw: response, status: 200}, "-"
+		if captures := rcache.Get(`^bytes=(\d+)-(\d*)$`).FindStringSubmatch(request.Header.Get("Range")); captures != nil {
+			srange = captures[1] + "-" + captures[2]
+		}
+		messages <- fmt.Sprintf("S|%04d|%s|%s|%s|%s", id%10000, start.Format("15:04:05.000"),
+			request.RemoteAddr, request.URL.Path, srange)
+		{
+			handler.ServeHTTP(&writer, request)
+		}
+		elapsed := time.Since(start)
+		if elapsed >= time.Second {
+			elapsed = elapsed.Truncate(10 * time.Millisecond)
+		} else if elapsed < time.Millisecond {
+			elapsed = elapsed.Truncate(time.Microsecond)
+		} else {
+			elapsed = elapsed.Truncate(time.Millisecond)
+		}
+		messages <- fmt.Sprintf("E|%04d|%s|%s|%s|%s|%d|%d|%v|%s", id%10000, time.Now().Format("15:04:05.000"),
+			request.RemoteAddr, request.URL.Path, srange, writer.status, writer.total, elapsed, hbandwidth((float64(writer.total)*8)/(float64(elapsed)/float64(time.Second))))
+		atomic.AddInt64(&inflight, -1)
 	})
 }
 
 func Server() {
-	tlspaths := []string{}
+	go func() {
+		previous := int64(0)
+		for {
+			start := time.Now()
+			select {
+			case message := <-messages:
+				if Dump {
+					fmt.Printf("\r%s     \n", message)
+				}
+			case <-time.After(250 * time.Millisecond):
+			}
+			current := atomic.LoadInt64(&total)
+			if previous == 0 {
+				previous = current
+			}
+			if elapsed := time.Since(start); elapsed >= 100*time.Millisecond && Verbose {
+				fmt.Printf("\r%d | %s     ", atomic.LoadInt64(&inflight), hbandwidth((float64(current-previous)*8)/(float64(elapsed)/float64(time.Second))))
+			}
+			previous = current
+		}
+	}()
+
+	cpaths := []string{}
 	if Certificate == "internal" {
-		tlspaths = []string{fmt.Sprintf("%s/%s-cert-%d.pem", os.TempDir(), PROGNAME, os.Getpid()), fmt.Sprintf("%s/%s-key-%d.pem", os.TempDir(), PROGNAME, os.Getpid())}
-		ioutil.WriteFile(tlspaths[0], []byte(internal[0]), 0644)
-		ioutil.WriteFile(tlspaths[1], []byte(internal[1]), 0600)
+		cpaths = []string{fmt.Sprintf("%s/%s-cert-%d.pem", os.TempDir(), PROGNAME, os.Getpid()), fmt.Sprintf("%s/%s-key-%d.pem", os.TempDir(), PROGNAME, os.Getpid())}
+		ioutil.WriteFile(cpaths[0], []byte(internal[0]), 0644)
+		ioutil.WriteFile(cpaths[1], []byte(internal[1]), 0600)
 		go func() {
 			signals := make(chan os.Signal, 1)
 			signal.Notify(signals, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 			<-signals
-			for _, path := range tlspaths {
+			for _, path := range cpaths {
 				os.Remove(path)
 			}
 			os.Exit(0)
 		}()
 	} else if value := strings.SplitN(Certificate, ",", 2); len(value) == 2 {
-		tlspaths = []string{strings.TrimSpace(value[0]), strings.TrimSpace(value[1])}
+		cpaths = []string{strings.TrimSpace(value[0]), strings.TrimSpace(value[1])}
 	}
 
 	mux, handler := http.NewServeMux(), simulate()
@@ -207,10 +274,10 @@ func Server() {
 	}
 	for {
 		if listener, err := listener.NewTCPListener("tcp", Listen, true, 0, 0, nil); err == nil {
-			if len(tlspaths) == 2 {
-				certificates := &dynacert.DYNACERT{}
-				certificates.Add("*", tlspaths[0], tlspaths[1])
-				server.TLSConfig = dynacert.IntermediateTLSConfig(certificates.GetCertificate)
+			if len(cpaths) == 2 {
+				certificate := &dynacert.DYNACERT{}
+				certificate.Add("*", cpaths[0], cpaths[1])
+				server.TLSConfig = certificate.TLSConfig()
 				server.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
 				server.ServeTLS(listener, "", "")
 			} else {

@@ -48,7 +48,7 @@ func request(input *CHUNK, dump bool) (output *CHUNK, err error) {
 	if err != nil {
 		return input, err
 	}
-	request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", PROGNAME, VERSION))
+	request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", PROGNAME, PROGVER))
 	for _, header := range Source {
 		request.Header.Set(header[0], header[1])
 	}
@@ -283,7 +283,7 @@ func Client() {
 							if err != nil {
 								exit(err, 4)
 							}
-							request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", PROGNAME, VERSION))
+							request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", PROGNAME, PROGVER))
 							request.Header.Set("Content-Type", "application/octet-stream")
 							for _, header := range Target {
 								request.Header.Set(header[0], header[1])

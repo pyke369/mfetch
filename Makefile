@@ -13,7 +13,6 @@ distclean:
 
 # run targets
 server: $(PROGNAME)
-	@./$(PROGNAME) --verbose --dump --listen :8000
+	@./$(PROGNAME) -verbose -listen :8000
 client: $(PROGNAME)
-	@./$(PROGNAME) --verbose http://localhost:8000/100GiB
-
+	@./$(PROGNAME) -verbose -dump http://localhost:8000/100G

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,7 +28,7 @@ import (
 // Not Before: Jan 21 15:04:26 2021 GMT
 // Not After : Jan 19 15:04:26 2031 GMT
 var (
-	internal = [2]string{`-----BEGIN CERTIFICATE-----
+	serverCertificate = [2]string{`-----BEGIN CERTIFICATE-----
 MIIDAzCCAeugAwIBAgIUWMSowSdFhsDhUhar0+Q9cvu1hgkwDQYJKoZIhvcNAQEL
 BQAwETEPMA0GA1UEAwwGbWZldGNoMB4XDTIxMDEyMTE1MDQyNloXDTMxMDExOTE1
 MDQyNlowETEPMA0GA1UEAwwGbWZldGNoMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
@@ -78,33 +77,33 @@ MJYHjCl6QyJlC4jv/NkchyPwYY11YubYXvxAjNnTB11uFLz2XpQF3+t5z60MBye/
 GooiNcKqSQG5n1ivW1PdzY3T0Q==
 -----END PRIVATE KEY-----
 `}
-	content  = bytes.Repeat([]byte{0}, 64<<10)
-	rid      = int64(0)
-	inflight = int64(0)
-	total    = int64(0)
-	messages = make(chan string, 1024)
+	serverPayload  = bytes.Repeat([]byte{0}, 64<<10)
+	serverId       = int64(0)
+	serverInflight = int64(0)
+	serverSent     = int64(0)
+	serverMessages = make(chan string, 1<<10)
 )
 
-type accountingWriter struct {
+type serverWriter struct {
 	rw     http.ResponseWriter
 	status int
-	total  int64
+	sent   int64
 }
 
-func (aw *accountingWriter) Header() http.Header {
-	return aw.rw.Header()
+func (sw *serverWriter) Header() http.Header {
+	return sw.rw.Header()
 }
-func (aw *accountingWriter) WriteHeader(status int) {
-	aw.status = status
-	aw.rw.WriteHeader(status)
+func (sw *serverWriter) WriteHeader(status int) {
+	sw.status = status
+	sw.rw.WriteHeader(status)
 }
-func (aw *accountingWriter) Write(data []byte) (n int, err error) {
-	aw.total += int64(len(data))
-	atomic.AddInt64(&total, int64(len(data)))
-	return aw.rw.Write(data)
+func (sw *serverWriter) Write(data []byte) (n int, err error) {
+	sw.sent += int64(len(data))
+	atomic.AddInt64(&serverSent, int64(len(data)))
+	return sw.rw.Write(data)
 }
 
-func simulate() http.Handler {
+func serverSimulate() http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Accept-Ranges", "bytes")
 		captures := rcache.Get(`^/(\d+)([kmg]i?b?)?$`).FindStringSubmatch(strings.ToLower(request.URL.Path))
@@ -112,9 +111,8 @@ func simulate() http.Handler {
 			response.WriteHeader(http.StatusNotFound)
 			return
 		}
-
-		size, _ := strconv.Atoi(captures[1])
-		base := 1000
+		size, _ := strconv.ParseInt(captures[1], 10, 64)
+		base := int64(1000)
 		if strings.Contains(captures[2], "i") {
 			base = 1024
 		}
@@ -132,27 +130,27 @@ func simulate() http.Handler {
 			return
 		}
 
-		start, end, captures := 0, size-1, rcache.Get(`^bytes=(\d+)-(\d*)$`).FindStringSubmatch(request.Header.Get("Range"))
+		captures, start, end := rcache.Get(`^bytes=(\d+)-(\d*)$`).FindStringSubmatch(request.Header.Get("Range")), int64(0), size-1
 		if captures != nil {
-			start, _ = strconv.Atoi(captures[1])
+			start, _ = strconv.ParseInt(captures[1], 10, 64)
 			if start >= size {
 				response.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 				return
 			}
-			if value, err := strconv.Atoi(captures[2]); err == nil {
+			if value, err := strconv.ParseInt(captures[2], 10, 64); err == nil {
 				end = value
 				if end < start {
 					response.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 					return
 				}
-				end = int(math.Min(float64(size-1), float64(end)))
+				end = min(size-1, end)
 			}
 			response.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
 			size = end - start + 1
 		}
 
 		response.Header().Set("Content-Type", "application/octet-stream")
-		response.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+		response.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		if captures != nil {
 			response.WriteHeader(http.StatusPartialContent)
 		}
@@ -160,11 +158,11 @@ func simulate() http.Handler {
 			return
 		}
 		for size > 0 {
-			sent, err := response.Write(content[:int(math.Min(float64(len(content)), float64(size)))])
+			sent, err := response.Write(serverPayload[:min(len(serverPayload), int(size))])
 			if err != nil {
 				break
 			}
-			size -= sent
+			size -= int64(sent)
 		}
 	})
 }
@@ -195,16 +193,16 @@ func base(handler http.Handler) http.Handler {
 			return
 		}
 
-		atomic.AddInt64(&inflight, 1)
-		id, start, writer, srange := atomic.AddInt64(&rid, 1), time.Now(), accountingWriter{rw: response, status: 200}, "-"
+		atomic.AddInt64(&serverInflight, 1)
+		id, start, writer, srange := atomic.AddInt64(&serverId, 1), time.Now(), serverWriter{rw: response, status: 200}, "-"
 		if captures := rcache.Get(`^bytes=(\d+)-(\d*)$`).FindStringSubmatch(request.Header.Get("Range")); captures != nil {
 			srange = captures[1] + "-" + captures[2]
 		}
-		messages <- fmt.Sprintf("S|%04d|%s|%s|%s|%s", id%10000, start.Format("15:04:05.000"),
-			request.RemoteAddr, request.URL.Path, srange)
-		{
-			handler.ServeHTTP(&writer, request)
+		if Dump {
+			serverMessages <- fmt.Sprintf("S|%04d|%s|%s|%s|%s", id%10000, start.Format("15:04:05.000"),
+				request.RemoteAddr, request.URL.Path, srange)
 		}
+		handler.ServeHTTP(&writer, request)
 		elapsed := time.Since(start)
 		if elapsed >= time.Second {
 			elapsed = elapsed.Truncate(10 * time.Millisecond)
@@ -213,9 +211,11 @@ func base(handler http.Handler) http.Handler {
 		} else {
 			elapsed = elapsed.Truncate(time.Millisecond)
 		}
-		messages <- fmt.Sprintf("E|%04d|%s|%s|%s|%s|%d|%d|%v|%s", id%10000, time.Now().Format("15:04:05.000"),
-			request.RemoteAddr, request.URL.Path, srange, writer.status, writer.total, elapsed, hbandwidth((float64(writer.total)*8)/(float64(elapsed)/float64(time.Second))))
-		atomic.AddInt64(&inflight, -1)
+		if Dump {
+			serverMessages <- fmt.Sprintf("E|%04d|%s|%s|%s|%s|%d|%d|%v|%s", id%10000, time.Now().Format("15:04:05.000"),
+				request.RemoteAddr, request.URL.Path, srange, writer.status, writer.sent, elapsed, utilBandwidth((float64(writer.sent)*8)/(float64(elapsed)/float64(time.Second))))
+		}
+		atomic.AddInt64(&serverInflight, -1)
 	})
 }
 
@@ -225,28 +225,26 @@ func Server() {
 		for {
 			start := time.Now()
 			select {
-			case message := <-messages:
-				if Dump {
-					fmt.Printf("\r%s     \n", message)
-				}
-			case <-time.After(250 * time.Millisecond):
+			case message := <-serverMessages:
+				fmt.Fprintf(os.Stderr, "\r%s     \n", message)
+			case <-time.After(time.Second):
 			}
-			current := atomic.LoadInt64(&total)
+			current := atomic.LoadInt64(&serverSent)
 			if previous == 0 {
 				previous = current
 			}
 			if elapsed := time.Since(start); elapsed >= 100*time.Millisecond && Verbose {
-				fmt.Printf("\r%d | %s     ", atomic.LoadInt64(&inflight), hbandwidth((float64(current-previous)*8)/(float64(elapsed)/float64(time.Second))))
+				fmt.Fprintf(os.Stderr, "\r%d | %s     ", atomic.LoadInt64(&serverInflight), utilBandwidth((float64(current-previous)*8)/(float64(elapsed)/float64(time.Second))))
+				previous = current
 			}
-			previous = current
 		}
 	}()
 
 	cpaths := []string{}
 	if Certificate == "internal" {
 		cpaths = []string{fmt.Sprintf("%s/%s-cert-%d.pem", os.TempDir(), PROGNAME, os.Getpid()), fmt.Sprintf("%s/%s-key-%d.pem", os.TempDir(), PROGNAME, os.Getpid())}
-		ioutil.WriteFile(cpaths[0], []byte(internal[0]), 0644)
-		ioutil.WriteFile(cpaths[1], []byte(internal[1]), 0600)
+		ioutil.WriteFile(cpaths[0], []byte(serverCertificate[0]), 0644)
+		ioutil.WriteFile(cpaths[1], []byte(serverCertificate[1]), 0600)
 		go func() {
 			signals := make(chan os.Signal, 1)
 			signal.Notify(signals, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
@@ -260,7 +258,7 @@ func Server() {
 		cpaths = []string{strings.TrimSpace(value[0]), strings.TrimSpace(value[1])}
 	}
 
-	mux, handler := http.NewServeMux(), simulate()
+	mux, handler := http.NewServeMux(), serverSimulate()
 	if Flagset.NArg() > 0 {
 		handler = http.FileServer(http.Dir(Flagset.Args()[0]))
 	}

@@ -1,8 +1,5 @@
 ## Presentation
-`mfetch` is an HTTP(S)-based file transfer program written in Golang, aimed at copying data between systems as fast
-as possible over multiple TCP connections.  It can act as a client or a server, and has an interrupted transfer resuming
-capability. In terms of performance, `mfetch` can easily saturate multi-gigabits network paths (even with back-to-back
-latencies above 300ms), with a very moderate CPU usage (the main limitation being disk write iops).
+`mfetch` is an HTTP(S)-based file transfer program written in Golang, aimed at copying data between systems as fast as possible over multiple TCP connections.  It can act as a client or a server, and has an interrupted transfer resuming capability. In terms of performance, `mfetch` can easily saturate multi-gigabits network paths (even with back-to-back latencies above 300ms), with a very moderate CPU usage (the main limitation being disk write iops).
 
 
 ## Usage
@@ -22,13 +19,15 @@ options:
   -certificate string
         use provided TLS certificate & key in server mode (or "internal", no default)
   -concurrency int
-        set transfer concurrency level (default 8)
+        set transfer concurrency level (default 6)
   -dump
         dump HTTP requests and responses (default false)
   -insecure
         ignore remote TLS certificate errors (default false)
   -listen string
         set listening address & port in server mode (default client mode)
+  -maxmem int
+        set maximum memory used for in-memory transfers (default 512MB)
   -noresume
         disable transfer auto-resuming (default false)
   -password string
@@ -37,8 +36,6 @@ options:
         use HTTP POST method for remote target (default PUT)
   -progress
         emit transfer progress JSON indications (default false)
-  -retries int
-        set source request retries (default 4)
   -source value
         add HTTP header to source request (repeatable, no default)
   -target value
@@ -47,6 +44,8 @@ options:
         set requests timeout (default 10)
   -verbose
         set verbose mode (default false)
+  -version
+        show program version and exit
 ```
 
 
@@ -67,8 +66,6 @@ The following options are available in client mode:
 
 - `-progress` (default `false`): emit transfer progress indications on standard output (in JSON format, see format in the `Examples` section below).
 
-- `-retries` (default `4`): retry failed transfers for the specified number of times.
-
 - `-source` (`no default`): additionnal HTTP headers sent with all source requests; can be used multiple times if needed, for instance:
 ```
 $ mfetch -source 'X-Header: value1' -source 'X-Another-Header: value2' https://...
@@ -77,8 +74,6 @@ $ mfetch -source 'X-Header: value1' -source 'X-Another-Header: value2' https://.
 ```
 $ mfetch -target 'X-Header: value1' -target 'X-Another-Header: value2' https://...
 ```
-- `-timeout` (default `10s`): fail a connection if data transfer stay stalled for the specified number of seconds (also see `retries` above).
-
 - `-verbose` (default `false`): display transfer progress information on standard error (see format in the `Examples` section below).
 
 
@@ -112,22 +107,25 @@ Starts an `mfetch` instance in server mode and share the files in the /tmp folde
 $ mfetch -listen :443 -certificate internal -password password /tmp
 ```
 
-Start an mfetch instance in client mode and download the `20GiB` file from the server instance above (since the self-signed internal TLS certificate was used, the `-insecure` must be added to the command-line options for this to work) :
+Start an mfetch instance in client mode and download the `4G` file from the server instance above (since the self-signed internal TLS certificate was used, the `-insecure` must be added to the command-line options for this to work) :
 ```
-$ mfetch -verbose -progress -insecure https://login:password@localhost/20GiB out
-860.45MB/20.0GB | 4.2% | 293.8Mb/s | 0:00:24/0:09:44
-{"event":"start","size":21474836480,"received":0,"progress":0,"elapsed":0.000}
+$ mfetch -verbose -progress -insecure https://login:password@localhost/4G out
+6 | 1.7GiB/3.7GiB | 45.83% | 6.9Gb/s | 0:00:02/0:00:04
+{"event":"start","concurrency":6,"size":4000000000,"received":0,"bandwidth":"0b/s","elapsed":0.00},"progress":0.00}
+{"event":"progress","concurrency":6,"size":4000000000,"received":552736315,"bandwidth":"4.4Gb/s","elapsed":1.00},"progress":13.82}
+{"event":"progress","concurrency":6,"size":4000000000,"received":1022236219,"bandwidth":"3.8Gb/s","elapsed":2.01},"progress":25.56}
 ...
-{"event":"progress","size":21474836480,"received":902247219,"progress":4,"elapsed":24.287}
+{"event":"progress","concurrency":6,"size":4000000000,"received":3831240251,"bandwidth":"3.7Gb/s","elapsed":8.14},"progress":95.78}
+{"event":"end","concurrency":6,"size":4000000000,"received":4000000000,"bandwidth":"3.8Gb/s","elapsed":8.50},"progress":100.00}
 ```
-When the `-verbose` option is specified on the command-line, `mfetch` will output some progress information on the standard error in the following format:
+When the `-verbose` option is specified on the command-line, `mfetch` will emit progress information on the standard error in the following format:
 ```
-<received size>/<total size> | <received percentage> | <transfer speed> | <elapsed time>/<estimated total time>
+<concurrency> | <received size>/<total size> | <received percentage> | <transfer speed> | <elapsed time>/<estimated total time>
 ```
 
-When the `-progress` option is specified on the command-line, `mfetch` will emit some progress indications on the standard output in the following JSON format:
+When the `-progress` option is specified on the command-line, `mfetch` will emit progress indications on the standard output in the following JSON format:
 ```
-{"event":"start|progress|end","size":<total size>,"received":<transferred size>,"progress":<transferred percentage>,"elapsed":<elapsed seconds>}
+{"event":"start|progress|end","concurrency":<concurrency>,"size":<total bytes>,"received":<received bytes>,"bandwidth":<receive bandwidth>,"elapsed":<seconds>,"progress":<percentage>}
 ```
 
 ## Build
@@ -142,7 +140,7 @@ $ make
 ```
 This will take care of building everything. You may alternatively use the Golang toolchain and install `mfetch` locally with the following command:
 ```
-go install github.com/pyke369/mfetch@lastest
+go install github.com/pyke369/mfetch@latest
 ```
 
 ## Projects with similar goals

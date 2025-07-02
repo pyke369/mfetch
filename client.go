@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -50,28 +50,29 @@ var (
 
 func clientAbort(exit int, message string) {
 	if exit != 0 {
-		fmt.Fprintf(os.Stderr, "\r                                                       \r%s - aborting\n", message)
+		os.Stderr.WriteString("\r                                                       \r" + message + " - aborting\n")
 	}
 	if Progress {
-		fmt.Printf(`{"event":"error","message":"%s"}`+"\n", message)
+		os.Stdout.WriteString(`{"event":"error","message":"` + message + `"}` + "\n")
 	}
 	os.Exit(exit)
 }
 
 func clientRequest(chunk *clientChunk) (err error) {
-	request, err := http.NewRequest(http.MethodGet, Flagset.Args()[0], nil)
+	request, err := http.NewRequest(http.MethodGet, Flagset.Args()[0], http.NoBody)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("User-Agent", fmt.Sprintf("%s/%s", PROGNAME, PROGVER))
+	request.Header.Set("User-Agent", PROGNAME+"/"+PROGVER)
 	for _, header := range Source {
-		if strings.ToLower(header[0]) == "host" {
+		if strings.EqualFold(header[0], "host") {
 			request.Host = header[1]
+
 		} else {
 			request.Header.Set(header[0], header[1])
 		}
 	}
-	request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.offset, chunk.end))
+	request.Header.Set("Range", "bytes="+strconv.FormatInt(chunk.offset, 10)+"-"+strconv.FormatInt(chunk.end, 10))
 	if Dump {
 		chunk.request, _ = httputil.DumpRequest(request, false)
 	}
@@ -92,12 +93,13 @@ func clientRequest(chunk *clientChunk) (err error) {
 	if captures := rcache.Get(`^bytes (\d+)-\d+/(\d+)$`).FindStringSubmatch(response.Header.Get("Content-Range")); captures != nil && chunk.status == http.StatusPartialContent {
 		chunk.offset, _ = strconv.ParseInt(captures[1], 10, 64)
 		chunk.size, _ = strconv.ParseInt(captures[2], 10, 64)
+
 	} else {
 		chunk.offset, chunk.size = 0, response.ContentLength
 	}
 	if chunk.status/100 != 2 {
 		response.Body.Close()
-		return fmt.Errorf("source http status %d", chunk.status)
+		return errors.New("source http status " + strconv.Itoa(chunk.status))
 	}
 	if chunk.size == 0 || (chunk.size < 0 && chunk.start == 0 && chunk.end == 0) {
 		response.Body.Close()
@@ -109,9 +111,11 @@ func clientRequest(chunk *clientChunk) (err error) {
 		read, err := response.Body.Read(data)
 		if read > 0 {
 			atomic.AddInt64(&clientReceived, int64(read))
-			if chunk.file != nil {
+			switch {
+			case chunk.file != nil:
 				if chunk.start < 0 && chunk.end < 0 {
 					_, err = chunk.file.Write(data[:read])
+
 				} else {
 					clientLock.Lock()
 					_, err = chunk.file.WriteAt(data[:read], chunk.offset)
@@ -121,17 +125,20 @@ func clientRequest(chunk *clientChunk) (err error) {
 					response.Body.Close()
 					return err
 				}
-			} else if chunk.stdout {
+
+			case chunk.stdout:
 				if _, err = os.Stdout.Write(data[:read]); err != nil {
 					response.Body.Close()
 					return err
 				}
-			} else if chunk.writer != nil {
+
+			case chunk.writer != nil:
 				if _, err = chunk.writer.Write(data[:read]); err != nil {
 					response.Body.Close()
 					return err
 				}
-			} else if chunk.data != nil {
+
+			case chunk.data != nil:
 				copy(chunk.data[chunk.offset-chunk.start:], data[:read])
 			}
 			chunk.offset += int64(read)
@@ -145,7 +152,7 @@ func clientRequest(chunk *clientChunk) (err error) {
 				return err
 			}
 			if chunk.size > 0 && chunk.offset != chunk.end+1 {
-				return fmt.Errorf("truncated transfer")
+				return errors.New("truncated transfer")
 			}
 			return nil
 		}
@@ -174,7 +181,7 @@ func Client() {
 	chunk := clientChunk{}
 	err := clientRequest(&chunk)
 	if Dump {
-		fmt.Fprintf(os.Stderr, "%s%s", chunk.request, chunk.response)
+		os.Stderr.WriteString(string(chunk.request) + string(chunk.response))
 	}
 	if err != nil {
 		clientAbort(1, err.Error())
@@ -219,7 +226,7 @@ func Client() {
 			request.ContentLength = clientSize
 			if Dump {
 				dump, _ := httputil.DumpRequest(request, false)
-				fmt.Fprintf(os.Stderr, "%s", dump)
+				os.Stderr.Write(dump)
 			}
 			waiter1.Add(1)
 			go func() {
@@ -229,11 +236,11 @@ func Client() {
 				}
 				if Dump {
 					dump, _ := httputil.DumpResponse(response, true)
-					fmt.Fprintf(os.Stderr, "\r                                                            \n%s", dump)
+					os.Stderr.WriteString("\r                                                            \n" + string(dump))
 				}
 				response.Body.Close()
 				if response.StatusCode/100 != 2 {
-					clientAbort(4, fmt.Sprintf("target http status %d", response.StatusCode))
+					clientAbort(4, "target http status "+strconv.Itoa(response.StatusCode))
 				}
 				waiter1.Done()
 			}()
@@ -242,11 +249,12 @@ func Client() {
 			if _, err := os.Stat(target); err != nil || Noresume {
 				os.Remove(filepath.Join(filepath.Dir(target), "."+filepath.Base(target)+".resume"))
 			}
-			os.MkdirAll(filepath.Dir(target), 0755)
+			os.MkdirAll(filepath.Dir(target), 0o755)
 			if clientSize < 0 {
-				file, err = os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_RDWR|os.O_APPEND, 0644)
+				file, err = os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_RDWR|os.O_APPEND, 0o644)
+
 			} else {
-				file, err = os.OpenFile(target, os.O_CREATE|os.O_RDWR, 0644)
+				file, err = os.OpenFile(target, os.O_CREATE|os.O_RDWR, 0o644)
 			}
 			if err != nil {
 				clientAbort(2, err.Error())
@@ -292,28 +300,25 @@ func Client() {
 				bandwidth = float64((received - previous) * 8)
 				if Verbose {
 					if clientSize < 0 {
-						fmt.Fprintf(os.Stderr,
-							"\r%d | %s | %s | %s     ",
-							Concurrency,
-							utilSize(received),
-							utilBandwidth(bandwidth),
-							utilDuration(int(time.Since(start)/time.Second)),
-						)
+						os.Stderr.WriteString("\r" + strconv.Itoa(Concurrency) +
+							" | " + utilSize(received) +
+							" | " + utilBandwidth(bandwidth) +
+							" | " + utilDuration(int(time.Since(start)/time.Second)) +
+							"     ")
+
 					} else {
 						mbandwidth := float64((received-initial)*8) / (float64(time.Since(start)) / float64(time.Second))
 						if mbandwidth == 0 {
 							mbandwidth = -1
 						}
-						fmt.Fprintf(os.Stderr,
-							"\r%d | %s/%s | %.2f%% | %s | %s/%s     ",
-							Concurrency,
-							utilSize(received),
-							utilSize(clientSize),
-							float64(received*100)/float64(clientSize),
-							utilBandwidth(bandwidth),
-							utilDuration(int(time.Since(start)/time.Second)),
-							utilDuration(int(float64((clientSize-initial)*8)/mbandwidth)),
-						)
+						os.Stderr.WriteString("\r" + strconv.Itoa(Concurrency) +
+							" | " + utilSize(received) +
+							"/" + utilSize(clientSize) +
+							" | " + strconv.FormatFloat(float64(received*100)/float64(clientSize), 'f', 2, 64) +
+							"% | " + utilBandwidth(bandwidth) +
+							" | " + utilDuration(int(time.Since(start)/time.Second)) +
+							"/" + utilDuration(int(float64((clientSize-initial)*8)/mbandwidth)) +
+							"     ")
 					}
 				}
 				if received == clientSize {
@@ -321,19 +326,16 @@ func Client() {
 					bandwidth = float64((clientSize-initial)*8) / (float64(time.Since(start)) / float64(time.Second))
 				}
 				if Progress {
-					line := fmt.Sprintf(
-						`{"event":"%s","concurrency":%d,"size":%d,"received":%d,"bandwidth":"%s","elapsed":%.2f}`,
-						clientEvent,
-						Concurrency,
-						clientSize,
-						clientReceived,
-						utilBandwidth(bandwidth),
-						float64(time.Since(start))/float64(time.Second),
-					)
+					line := `{"event":"` + clientEvent +
+						`","concurrency":` + strconv.Itoa(Concurrency) +
+						`,"size":` + strconv.FormatInt(clientSize, 10) +
+						`,"received":` + strconv.FormatInt(clientReceived, 10) +
+						`,"bandwidth":"` + utilBandwidth(bandwidth) +
+						`","elapsed":` + strconv.FormatFloat(float64(time.Since(start))/float64(time.Second), 'f', 2, 64)
 					if clientSize >= 0 {
-						line += fmt.Sprintf(`,"progress":%.2f`, float64(clientReceived*100)/float64(clientSize))
+						line += `,"progress":` + strconv.FormatFloat(float64(clientReceived*100)/float64(clientSize), 'f', 2, 64)
 					}
-					fmt.Printf(line + "}\n")
+					os.Stdout.WriteString(line + "}\n")
 					if clientEvent == "start" {
 						clientEvent = "progress"
 					}
@@ -341,7 +343,7 @@ func Client() {
 				previous = received
 				if clientResume != "" {
 					if payload, err := json.Marshal(clientProgress[:Concurrency]); err == nil {
-						os.WriteFile(clientResume, payload, 0644)
+						os.WriteFile(clientResume, payload, 0o644)
 					}
 				}
 				if clientSize >= 0 && received >= clientSize {
@@ -353,17 +355,16 @@ func Client() {
 				select {
 				case <-done:
 					clientSize = atomic.LoadInt64(&clientReceived)
+
 				case <-time.After(time.Second):
 				}
 			}
 			if Verbose {
-				fmt.Fprintf(os.Stderr,
-					"\r%d | %s | %s | %s                             \n",
-					Concurrency,
-					utilSize(clientSize),
-					utilBandwidth(bandwidth),
-					utilDuration(int(time.Since(start)/time.Second)),
-				)
+				os.Stderr.WriteString("\r" + strconv.Itoa(Concurrency) +
+					" | " + utilSize(clientSize) +
+					" | " + utilBandwidth(bandwidth) +
+					" | " + utilDuration(int(time.Since(start)/time.Second)) +
+					"                             \n")
 			}
 			waiter1.Done()
 		}()

@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +11,7 @@ import (
 
 const (
 	PROGNAME = "mfetch"
-	PROGVER  = "1.2.1"
+	PROGVER  = "1.3.0"
 )
 
 var (
@@ -36,17 +35,19 @@ var (
 
 func main() {
 	Flagset.Usage = func() {
-		fmt.Fprintf(os.Stderr, `usage:
-  %s [<option...>] <argument...>
-
-arguments:
-  - client mode
-        <source-url> [-|<local-file>|<target-url>]
-  - server mode
-        [<local-folder>]
-
-options:
-`, filepath.Base(os.Args[0]))
+		os.Stderr.WriteString(strings.Join([]string{
+			"usage:",
+			"  " + filepath.Base(os.Args[0]) + " [<option...>] <argument...>",
+			"",
+			"arguments:",
+			"  - client mode",
+			"        <source-url> [-|<local-file>|<target-url>]",
+			"  - server mode",
+			"        [<local-folder>]",
+			"",
+			"options:",
+			"",
+		}, "\n"))
 		Flagset.PrintDefaults()
 	}
 	Flagset.BoolVar(&Version, "version", Version, "show program version and exit")
@@ -71,7 +72,7 @@ options:
 	Listen, Certificate, Password = strings.TrimLeft(strings.TrimSpace(Listen), "*"), strings.TrimSpace(Certificate), strings.TrimSpace(Password)
 
 	if Version {
-		fmt.Printf("%s v%s\n", PROGNAME, PROGVER)
+		os.Stdout.WriteString(PROGNAME + " v" + PROGVER + "\n")
 		return
 	}
 

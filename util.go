@@ -1,16 +1,24 @@
 package main
 
-import "fmt"
+import (
+	"strconv"
+
+	"github.com/pyke369/golang-support/ustr"
+)
 
 func utilSize(size int64) string {
-	if size < (1 << 10) {
-		return fmt.Sprintf("%dB", size)
-	} else if size < (1 << 20) {
-		return fmt.Sprintf("%.2fkiB", float64(size)/(1<<10))
-	} else if size < (1 << 30) {
-		return fmt.Sprintf("%.2fMiB", float64(size)/(1<<20))
-	} else {
-		return fmt.Sprintf("%.1fGiB", float64(size)/(1<<30))
+	switch {
+	case size < (1 << 10):
+		return strconv.FormatInt(size, 10) + "B"
+
+	case size < (1 << 20):
+		return strconv.FormatFloat(float64(size)/(1<<10), 'f', 2, 64) + "kiB"
+
+	case size < (1 << 30):
+		return strconv.FormatFloat(float64(size)/(1<<20), 'f', 2, 64) + "MiB"
+
+	default:
+		return strconv.FormatFloat(float64(size)/(1<<30), 'f', 1, 64) + "GiB"
 	}
 }
 
@@ -22,17 +30,21 @@ func utilDuration(duration int) string {
 	duration -= (hours * 3600)
 	minutes := duration / 60
 	duration -= (minutes * 60)
-	return fmt.Sprintf("%d:%02d:%02d", hours, minutes, duration)
+	return strconv.Itoa(hours) + ":" + ustr.Int(minutes, 2, 1) + ":" + ustr.Int(duration, 2, 1)
 }
 
 func utilBandwidth(bandwidth float64) string {
-	if bandwidth < 1000 {
-		return fmt.Sprintf("%.0fb/s", bandwidth)
-	} else if bandwidth < (1000 * 1000) {
-		return fmt.Sprintf("%.0fkb/s", bandwidth/(1000))
-	} else if bandwidth < (1000 * 1000 * 1000) {
-		return fmt.Sprintf("%.1fMb/s", bandwidth/(1000*1000))
-	} else {
-		return fmt.Sprintf("%.1fGb/s", bandwidth/(1000*1000*1000))
+	switch {
+	case bandwidth < 1000:
+		return strconv.FormatFloat(bandwidth, 'f', 0, 64) + "b/s"
+
+	case bandwidth < (1000 * 1000):
+		return strconv.FormatFloat(bandwidth/1000, 'f', 0, 64) + "kb/s"
+
+	case bandwidth < (1000 * 1000 * 1000):
+		return strconv.FormatFloat(bandwidth/(1000*1000), 'f', 1, 64) + "Mb/s"
+
+	default:
+		return strconv.FormatFloat(bandwidth/(1000*1000*1000), 'f', 1, 64) + "Gb/s"
 	}
 }

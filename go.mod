@@ -1,7 +1,7 @@
-module github.com/pyke369/mfetch
+module mfetch
 
-go 1.22
+go 1.24
 
-require github.com/pyke369/golang-support v0.0.0-20240321112402-ca735c199f7c
+require github.com/pyke369/golang-support v0.0.0-20250626122736-7742819060f5
 
-require golang.org/x/sys v0.19.0 // indirect
+require golang.org/x/sys v0.33.0 // indirect

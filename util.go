@@ -30,6 +30,7 @@ func utilDuration(duration int) string {
 	duration -= (hours * 3600)
 	minutes := duration / 60
 	duration -= (minutes * 60)
+
 	return strconv.Itoa(hours) + ":" + ustr.Int(minutes, 2, 1) + ":" + ustr.Int(duration, 2, 1)
 }
 

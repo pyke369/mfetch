@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -26,7 +25,7 @@ import (
 )
 
 var (
-	serverPayload  = bytes.Repeat([]byte{0}, 64<<10)
+	serverPayload  = make([]byte, 64<<10)
 	serverId       = int64(0)
 	serverInflight = int64(0)
 	serverSent     = int64(0)
@@ -121,6 +120,7 @@ func base(handler http.Handler) http.Handler {
 		response.Header().Set("Server", PROGNAME+"/"+PROGVER)
 		response.Header().Set("Access-Control-Allow-Origin", "*")
 		response.Header().Set("Access-Control-Allow-Methods", "OPTIONS, HEAD, GET")
+		response.Header().Set("Access-Control-Allow-Headers", "Range")
 		response.Header().Set("Access-Control-Max-Age", "86400")
 		if request.Method == http.MethodOptions {
 			return
@@ -153,6 +153,7 @@ func base(handler http.Handler) http.Handler {
 				ustr.Int(int(id%10000), 4, 1),
 				start.Format("15:04:05.000"),
 				request.RemoteAddr,
+				request.Method,
 				request.URL.Path,
 				srange,
 			}, "|")
@@ -170,15 +171,21 @@ func base(handler http.Handler) http.Handler {
 			elapsed = elapsed.Truncate(time.Millisecond)
 		}
 		if Dump {
+			rrange := "-"
+			if captures := rcache.Get(`^bytes (\d+-\d+/\d+)$`).FindStringSubmatch(writer.Header().Get("Content-Range")); captures != nil {
+				rrange = captures[1]
+			}
 			serverMessages <- strings.Join([]string{
 				"E",
 				ustr.Int(int(id%10000), 4, 1),
 				time.Now().Format("15:04:05.000"),
 				request.RemoteAddr,
+				request.Method,
 				request.URL.Path,
 				srange,
 				strconv.Itoa(writer.status),
 				strconv.FormatInt(writer.sent, 10),
+				rrange,
 				elapsed.String(),
 				utilBandwidth((float64(writer.sent) * 8) / (float64(elapsed) / float64(time.Second))),
 			}, "|")
